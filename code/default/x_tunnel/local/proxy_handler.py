@@ -3,6 +3,7 @@ import socket
 import struct
 import urlparse
 import select
+import base64
 
 import utils
 from xlog import getLogger
@@ -33,6 +34,7 @@ class Socks5Server():
         self.read_buffer = ""
         self.buffer_start = 0
         self.args = args
+        self.headers = {}
 
     def handle(self):
         self.__class__.handle_num += 1
@@ -296,7 +298,24 @@ class Socks5Server():
         host = host.encode()
         port = int(port)
 
-        header_block = self.read_headers()
+        sock = self.connection
+
+        self.save_header()
+
+        auth = self.get_header("Proxy-Authorization")
+
+        if auth is None:
+            xlog.warn("Proxy-Authorization is None")
+            sock.send(b'HTTP/1.1 500 Fail\r\n\r\n')
+            return
+        user_passwd_encode = base64.b64encode("cs:cs123")
+
+        auth_result = auth.find(user_passwd_encode)
+
+        if auth_result == -1:
+            xlog.warn("Proxy-Authorization is Error")
+            sock.send(b'HTTP/1.1 500 Fail\r\n\r\n')
+            return
 
         sock = self.connection
         conn_id = proxy_session.create_conn(sock, host, port)
@@ -370,4 +389,16 @@ class Socks5Server():
         g.session.conn_list[conn_id].transfer_received_data(left_buf)
 
         g.session.conn_list[conn_id].start(block=True)
+
+    def get_header(self, key):
+        return self.headers.get(key)
+
+    def save_header(self,):
+        header_block = self.read_headers()
+
+        lines = header_block.split("\r\n")
+        for line in lines:
+            key, _, value = line.rpartition(":")
+            if key.lower != '':
+                self.headers[key] = value
 
